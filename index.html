@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description"
+    content="Enter the haunted manor — an immersive scroll-driven cinematic experience powered by GSAP ScrollTrigger.">
+  <title>The Manor — Enter If You Dare</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=Inter:wght@300;400;500&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- PRELOADER                                       -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <div id="preloader">
+    <div class="preloader-inner">
+      <div class="preloader-icon">
+        <svg viewBox="0 0 100 100" width="80" height="80">
+          <circle class="preloader-ring" cx="50" cy="50" r="45" />
+        </svg>
+        <span class="preloader-eye">👁</span>
+      </div>
+      <h2 class="preloader-title">The Manor</h2>
+      <div class="preloader-bar-track">
+        <div class="preloader-bar-fill" id="preloaderBar"></div>
+      </div>
+      <p class="preloader-percent" id="preloaderPercent">0%</p>
+      <p class="preloader-hint">Loading frames…</p>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- SCROLL INDICATOR (visible after load)           -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <div id="scrollIndicator" class="scroll-indicator hidden">
+    <span>Scroll to enter</span>
+    <div class="scroll-arrow">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 5v14M5 12l7 7 7-7" />
+      </svg>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- AUDIO TOGGLE                                    -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <button id="audioToggle" class="audio-toggle hidden" aria-label="Toggle background music">
+    <svg class="audio-icon audio-on" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+      <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+      <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+    </svg>
+    <svg class="audio-icon audio-off" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+      <line x1="23" y1="9" x2="17" y2="15"/>
+      <line x1="17" y1="9" x2="23" y2="15"/>
+    </svg>
+  </button>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- CANVAS ANIMATION SECTION                        -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <section id="animationSection">
+    <canvas id="frameCanvas"></canvas>
+    <!-- Fade-to-black overlay driven by GSAP -->
+    <div id="fadeOverlay" class="fade-overlay"></div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- CONTENT SECTIONS (revealed after animation)     -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <main id="contentSections">
+
+    <!-- Hero reveal -->
+    <section class="content-section hero-section" id="heroSection">
+      <div class="section-inner">
+        <p class="section-eyebrow">A Dark Tale Awaits</p>
+        <h1 class="hero-title">
+          <span class="line">Welcome to</span>
+          <span class="line accent">The Manor</span>
+        </h1>
+        <p class="hero-subtitle">An immersive horror experience where every shadow hides a secret and every door leads
+          deeper into madness.</p>
+        <div class="hero-cta">
+          <a href="#gameplaySection" class="btn btn-primary" id="ctaPlay">Begin Your Descent</a>
+          <a href="#storySection" class="btn btn-ghost" id="ctaStory">Read the Lore</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- Divider -->
+    <div class="section-divider">
+      <svg viewBox="0 0 1200 60" preserveAspectRatio="none">
+        <path d="M0,30 Q300,0 600,30 T1200,30" fill="none" stroke="rgba(180,140,100,0.3)" stroke-width="1" />
+      </svg>
+    </div>
+
+    <!-- Story Section -->
+    <section class="content-section" id="storySection">
+      <div class="section-inner two-col">
+        <div class="col text-col">
+          <p class="section-eyebrow">The Story</p>
+          <h2 class="section-title">Blackwood Manor, 1887</h2>
+          <p class="section-text">
+            Lord Alistair Blackwood vanished on All Hallows' Eve, leaving behind only a locked journal and the faint
+            smell of sulfur.
+            The servants fled. The village sealed the road. Decades of silence followed — until the lights returned to
+            the windows,
+            flickering in patterns that no one could explain.
+          </p>
+          <p class="section-text">
+            You are an investigator drawn to the inexplicable. Armed with little more than a lantern and your wits,
+            you must uncover the truth buried within the manor's crumbling walls.
+          </p>
+        </div>
+        <div class="col visual-col">
+          <div class="lore-card" id="loreCard">
+            <div class="lore-card-inner">
+              <div class="lore-icon">📜</div>
+              <blockquote>"Do not open the third door on the east wing. What resides there has no name."</blockquote>
+              <cite>— Excerpt from the Blackwood Journal</cite>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Gameplay Features -->
+    <section class="content-section dark-section" id="gameplaySection">
+      <div class="section-inner">
+        <p class="section-eyebrow">Gameplay</p>
+        <h2 class="section-title center">What Awaits Inside</h2>
+        <div class="features-grid">
+          <div class="feature-card" id="featureExplore">
+            <div class="feature-icon">🔦</div>
+            <h3>Explore</h3>
+            <p>Navigate 40+ hand-crafted rooms, each hiding clues, traps, and terrors unique to the Blackwood legacy.
+            </p>
+          </div>
+          <div class="feature-card" id="featureSolve">
+            <div class="feature-icon">🧩</div>
+            <h3>Solve</h3>
+            <p>Decipher cryptic puzzles rooted in Victorian occultism. Every riddle brings you closer — or seals your
+              fate.</p>
+          </div>
+          <div class="feature-card" id="featureSurvive">
+            <div class="feature-icon">💀</div>
+            <h3>Survive</h3>
+            <p>Something stalks the hallways. Manage your sanity, conserve your light, and never look behind you.</p>
+          </div>
+          <div class="feature-card" id="featureDecide">
+            <div class="feature-icon">⚖️</div>
+            <h3>Decide</h3>
+            <p>Branching narratives lead to seven distinct endings. Your choices echo through the manor's dark history.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Stats / Specs -->
+    <section class="content-section" id="statsSection">
+      <div class="section-inner">
+        <p class="section-eyebrow">By the Numbers</p>
+        <h2 class="section-title center">The Manor in Detail</h2>
+        <div class="stats-row">
+          <div class="stat" id="stat1">
+            <span class="stat-number" data-target="40">0</span>
+            <span class="stat-label">Rooms to Explore</span>
+          </div>
+          <div class="stat" id="stat2">
+            <span class="stat-number" data-target="7">0</span>
+            <span class="stat-label">Unique Endings</span>
+          </div>
+          <div class="stat" id="stat3">
+            <span class="stat-number" data-target="12">0</span>
+            <span class="stat-label">Hours of Gameplay</span>
+          </div>
+          <div class="stat" id="stat4">
+            <span class="stat-number" data-target="204">0</span>
+            <span class="stat-label">Cinematic Frames</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA / Footer -->
+    <footer class="content-section footer-section" id="footerSection">
+      <div class="section-inner center">
+        <p class="section-eyebrow">Coming Soon</p>
+        <h2 class="section-title">Dare to Enter?</h2>
+        <p class="section-text footer-text">Wishlist now and be the first to step inside when the doors open.</p>
+        <a href="#" class="btn btn-primary btn-lg" id="ctaWishlist">Add to Wishlist</a>
+        <p class="copyright">© 2026 Blackwood Studios. All rights reserved.</p>
+      </div>
+    </footer>
+
+  </main>
+
+  <!-- GSAP + ScrollTrigger (CDN) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+  <script src="app.js"></script>
+</body>
+
+</html>
