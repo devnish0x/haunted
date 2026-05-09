@@ -3,6 +3,8 @@
  *  THE MANOR — Scroll-Driven Frame Animation Engine
  *  Uses GSAP ScrollTrigger + Canvas for buttery-smooth playback
  *  with lerp-based frame interpolation & cross-fade blending
+ *
+ *  Audio subsystem: file-based bg music + frame-synced jumpscare
  * ═══════════════════════════════════════════════════════════════════
  */
 
@@ -16,15 +18,26 @@
     totalFrames:     204,
     framePath:       'frames/ezgif-frame-',
     frameExt:        '.jpg',
-    scrollDistance:   '400%',   // how far the user scrolls for full animation
-    zoomStart:       1.0,      // canvas scale at frame 0
-    zoomEnd:         1.35,     // canvas scale at final frame
-    fadeStart:       0.82,     // scroll progress where fade-to-black begins
-    fadeEnd:         0.98,     // scroll progress where fade is fully black
-    batchSize:       15,       // how many images to load in parallel per batch
-    lerpSpeed:       0.12,     // smoothing factor (0 = frozen, 1 = instant snap)
-    blendFrames:     true,     // cross-fade blend between adjacent frames
+    scrollDistance:   '400%',
+    zoomStart:       1.0,
+    zoomEnd:         1.35,
+    fadeStart:       0.82,
+    fadeEnd:         0.98,
+    batchSize:       15,
+    lerpSpeed:       0.12,
+    blendFrames:     true,
   };
+
+  /* ─────────────────────────────────────────────
+     AUDIO CONFIGURATION
+     ───────────────────────────────────────────── */
+  const JUMPSCARE_FRAME = 157;
+  const JUMPSCARE_TOLERANCE = 3;          // ±3 frames to avoid missed triggers during fast scroll
+  const BG_MUSIC_PATH = 'music/backgroud.mp3';
+  const JUMPSCARE_PATH = 'music/jumpscare.mp3';
+  const BG_MUSIC_VOLUME = 0.35;
+  const BG_MUSIC_FADE_MS = 2000;
+  const JUMPSCARE_VOLUME = 0.85;
 
   /* ─────────────────────────────────────────────
      DOM REFS
@@ -40,18 +53,18 @@
   /* ─────────────────────────────────────────────
      STATE
      ───────────────────────────────────────────── */
-  const frames       = new Array(CONFIG.totalFrames);  // Image objects
-  let displayFrame   = 0;       // smoothed float frame (lerp'd towards target)
-  let targetFrame    = 0;       // exact frame requested by ScrollTrigger
-  let lastDrawnFrame = -1;      // last integer frame actually drawn
-  let lastDrawnFrac  = -1;      // last fractional part drawn (for blend detection)
+  const frames       = new Array(CONFIG.totalFrames);
+  let displayFrame   = 0;
+  let targetFrame    = 0;
+  let lastDrawnFrame = -1;
+  let lastDrawnFrac  = -1;
   let canvasW        = 0;
   let canvasH        = 0;
   let rafId          = null;
   let isAnimating    = true;
 
   /* ─────────────────────────────────────────────
-     UTILITY — pad frame number to 3 digits
+     UTILITY
      ───────────────────────────────────────────── */
   function padNumber(n) {
     return String(n).padStart(3, '0');
@@ -63,8 +76,6 @@
 
   /* ─────────────────────────────────────────────
      IMAGE PRELOADER
-     Loads in batches to avoid hammering the
-     browser with 200+ parallel requests.
      ───────────────────────────────────────────── */
   function preloadImages() {
     return new Promise((resolve) => {
@@ -115,24 +126,18 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
-  /**
-   * Draw a single image to canvas with cover-fit + zoom.
-   */
   function drawImageCover(img, zoom, alpha) {
     if (!img || !img.complete || !img.naturalWidth) return;
 
     ctx.save();
-
     if (alpha < 1) ctx.globalAlpha = alpha;
 
-    // Apply zoom from center
     const cx = canvasW / 2;
     const cy = canvasH / 2;
     ctx.translate(cx, cy);
     ctx.scale(zoom, zoom);
     ctx.translate(-cx, -cy);
 
-    // Cover-fit calculation
     const imgRatio    = img.naturalWidth / img.naturalHeight;
     const canvasRatio = canvasW / canvasH;
     let drawW, drawH, dx, dy;
@@ -151,10 +156,6 @@
     ctx.restore();
   }
 
-  /**
-   * Draw frame with optional cross-fade blending between
-   * two adjacent frames for sub-frame smoothness.
-   */
   function drawFrame(floatIndex, zoom) {
     const maxIdx = CONFIG.totalFrames - 1;
     const clamped = Math.max(0, Math.min(maxIdx, floatIndex));
@@ -166,36 +167,28 @@
     ctx.clearRect(0, 0, canvasW, canvasH);
 
     if (CONFIG.blendFrames && frac > 0.01 && frac < 0.99 && frameA !== frameB) {
-      // Cross-fade: draw base frame fully, overlay next frame with fractional alpha
       drawImageCover(frames[frameA], zoom, 1);
       drawImageCover(frames[frameB], zoom, frac);
     } else {
-      // Single frame (no blend needed — we're close enough to an integer frame)
       const snapIdx = Math.round(clamped);
       drawImageCover(frames[snapIdx], zoom, 1);
     }
   }
 
   /* ─────────────────────────────────────────────
-     RENDER LOOP — requestAnimationFrame
-     Uses lerp smoothing so the displayed frame
-     glides towards the target instead of jumping.
+     RENDER LOOP
      ───────────────────────────────────────────── */
   function renderLoop() {
     if (!isAnimating) return;
 
-    // Lerp towards target
     const diff = targetFrame - displayFrame;
 
     if (Math.abs(diff) > 0.05) {
-      // Smooth interpolation
       displayFrame += diff * CONFIG.lerpSpeed;
     } else {
-      // Snap when close enough to avoid infinite drift
       displayFrame = targetFrame;
     }
 
-    // Only redraw if something visually changed
     const intFrame = Math.round(displayFrame);
     const frac = displayFrame - Math.floor(displayFrame);
     const fracChanged = Math.abs(frac - lastDrawnFrac) > 0.008;
@@ -225,6 +218,196 @@
     }
   }
 
+  /* ═══════════════════════════════════════════════════════════════════
+     CINEMATIC HORROR AUDIO ENGINE
+     File-based bg music + frame-synced jumpscare with anti-overlap,
+     debounce, mute toggle, and browser autoplay policy handling.
+     ═══════════════════════════════════════════════════════════════════ */
+  const AudioEngine = (() => {
+    let bgMusic = null;
+    let jumpscareAudio = null;
+    let isMuted = false;
+    let bgMusicStarted = false;
+    let userHasInteracted = false;
+    let fadeInterval = null;
+
+    // Jumpscare trigger state
+    let jumpscareArmed = true;    // can fire
+    let jumpscareInZone = false;  // currently inside trigger range
+
+    /* — Create audio elements once, reuse forever — */
+    function createAudioElements() {
+      bgMusic = new Audio(BG_MUSIC_PATH);
+      bgMusic.loop = true;
+      bgMusic.volume = 0;
+      bgMusic.preload = 'auto';
+
+      jumpscareAudio = new Audio(JUMPSCARE_PATH);
+      jumpscareAudio.loop = false;
+      jumpscareAudio.volume = JUMPSCARE_VOLUME;
+      jumpscareAudio.preload = 'auto';
+    }
+
+    /* — Smooth volume fade for bg music — */
+    function fadeVolumeTo(audio, target, durationMs) {
+      if (fadeInterval) clearInterval(fadeInterval);
+
+      const steps = 30;
+      const stepTime = durationMs / steps;
+      const startVol = audio.volume;
+      const delta = (target - startVol) / steps;
+      let step = 0;
+
+      fadeInterval = setInterval(() => {
+        step++;
+        if (step >= steps) {
+          audio.volume = Math.max(0, Math.min(1, target));
+          clearInterval(fadeInterval);
+          fadeInterval = null;
+          return;
+        }
+        audio.volume = Math.max(0, Math.min(1, startVol + delta * step));
+      }, stepTime);
+    }
+
+    /* — Background music lifecycle — */
+    function startBgMusic() {
+      if (bgMusicStarted || isMuted || !bgMusic) return;
+
+      const playPromise = bgMusic.play();
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => {
+            bgMusicStarted = true;
+            fadeVolumeTo(bgMusic, BG_MUSIC_VOLUME, BG_MUSIC_FADE_MS);
+          })
+          .catch(() => {
+            // Autoplay blocked — will retry on next interaction
+            bgMusicStarted = false;
+          });
+      }
+    }
+
+    function stopBgMusic() {
+      if (!bgMusic || !bgMusicStarted) return;
+      fadeVolumeTo(bgMusic, 0, 600);
+      setTimeout(() => {
+        bgMusic.pause();
+        bgMusicStarted = false;
+      }, 650);
+    }
+
+    /* — Jumpscare playback with anti-overlap — */
+    function fireJumpscare() {
+      if (isMuted || !jumpscareAudio) return;
+
+      // Hard-stop any in-progress playback to prevent stacking
+      jumpscareAudio.pause();
+      jumpscareAudio.currentTime = 0;
+      jumpscareAudio.volume = JUMPSCARE_VOLUME;
+
+      const playPromise = jumpscareAudio.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(() => { /* autoplay blocked, silent fail */ });
+      }
+    }
+
+    /**
+     * Called every frame from the ScrollTrigger onUpdate.
+     * Determines if current frame is within the jumpscare trigger zone.
+     *
+     * Logic:
+     *  1. Check if currentFrame is within [JUMPSCARE_FRAME - tolerance, JUMPSCARE_FRAME + tolerance]
+     *  2. If entering zone AND armed → fire jumpscare, disarm
+     *  3. If leaving zone → re-arm for next pass
+     *
+     * This handles: forward scroll, reverse scroll, fast scroll, and prevents spam.
+     */
+    function checkJumpscareTrigger(currentFrame) {
+      const lo = JUMPSCARE_FRAME - JUMPSCARE_TOLERANCE;
+      const hi = JUMPSCARE_FRAME + JUMPSCARE_TOLERANCE;
+      const inZone = currentFrame >= lo && currentFrame <= hi;
+
+      if (inZone && !jumpscareInZone) {
+        // Just entered the zone
+        jumpscareInZone = true;
+        if (jumpscareArmed) {
+          jumpscareArmed = false;
+          fireJumpscare();
+        }
+      } else if (!inZone && jumpscareInZone) {
+        // Just exited the zone — re-arm for next entry
+        jumpscareInZone = false;
+        jumpscareArmed = true;
+      }
+    }
+
+    /* — Mute / Unmute toggle — */
+    function toggleMute() {
+      isMuted = !isMuted;
+
+      if (isMuted) {
+        // Mute everything
+        if (bgMusic) {
+          fadeVolumeTo(bgMusic, 0, 400);
+          setTimeout(() => { bgMusic.pause(); }, 450);
+        }
+        if (jumpscareAudio) {
+          jumpscareAudio.pause();
+          jumpscareAudio.currentTime = 0;
+        }
+        bgMusicStarted = false;
+      } else {
+        // Unmute — restart bg music
+        if (bgMusic && userHasInteracted) {
+          bgMusic.volume = 0;
+          const p = bgMusic.play();
+          if (p !== undefined) {
+            p.then(() => {
+              bgMusicStarted = true;
+              fadeVolumeTo(bgMusic, BG_MUSIC_VOLUME, BG_MUSIC_FADE_MS);
+            }).catch(() => {});
+          }
+        }
+      }
+
+      return isMuted;
+    }
+
+    /* — Autoplay policy: start bg music on first user gesture — */
+    function handleUserInteraction() {
+      if (userHasInteracted) return;
+      userHasInteracted = true;
+      startBgMusic();
+      // Remove listeners after first trigger — no further overhead
+      document.removeEventListener('click', handleUserInteraction);
+      document.removeEventListener('touchstart', handleUserInteraction);
+      document.removeEventListener('scroll', handleUserInteraction);
+      document.removeEventListener('keydown', handleUserInteraction);
+    }
+
+    function bindAutoplayListeners() {
+      document.addEventListener('click', handleUserInteraction, { once: false, passive: true });
+      document.addEventListener('touchstart', handleUserInteraction, { once: false, passive: true });
+      document.addEventListener('scroll', handleUserInteraction, { once: false, passive: true });
+      document.addEventListener('keydown', handleUserInteraction, { once: false, passive: true });
+    }
+
+    /* — Public init — */
+    function init() {
+      createAudioElements();
+      bindAutoplayListeners();
+    }
+
+    return {
+      init,
+      checkJumpscareTrigger,
+      toggleMute,
+      get isMuted() { return isMuted; },
+      get isPlaying() { return bgMusicStarted && !isMuted; },
+    };
+  })();
+
   /* ─────────────────────────────────────────────
      SCROLL-TRIGGER SETUP
      ───────────────────────────────────────────── */
@@ -240,11 +423,15 @@
         trigger: '#animationSection',
         start: 'top top',
         end: 'bottom bottom',
-        scrub: 0.6,          // higher scrub = smoother but laggier
+        scrub: 0.6,
         pin: false,
         onUpdate: (self) => {
-          // Set the target — renderLoop lerps towards it
+          // Set lerp target
           targetFrame = frameObj.frame;
+
+          // ── FRAME DETECTION: current integer frame for audio triggers ──
+          const currentFrame = Math.round(frameObj.frame);
+          AudioEngine.checkJumpscareTrigger(currentFrame);
 
           // Fade-to-black overlay
           const p = self.progress;
@@ -257,11 +444,9 @@
         },
         onLeave: () => {
           fadeOverlay.style.opacity = 1;
-          // Let the render loop finish smoothing to final frame
           displayFrame = CONFIG.totalFrames - 1;
           targetFrame  = CONFIG.totalFrames - 1;
-          const progress = 1;
-          const zoom = CONFIG.zoomStart + (CONFIG.zoomEnd - CONFIG.zoomStart) * progress;
+          const zoom = CONFIG.zoomStart + (CONFIG.zoomEnd - CONFIG.zoomStart);
           drawFrame(displayFrame, zoom);
           stopRenderLoop();
         },
@@ -272,7 +457,7 @@
       },
     });
 
-    // Hide scroll indicator once user starts scrolling
+    // Hide scroll indicator on scroll
     ScrollTrigger.create({
       trigger: '#animationSection',
       start: 'top top',
@@ -291,7 +476,6 @@
      CONTENT REVEAL ANIMATIONS
      ───────────────────────────────────────────── */
   function initContentAnimations() {
-    // Generic reveal helper
     function reveal(selector, opts = {}) {
       const elements = document.querySelectorAll(selector);
       elements.forEach((el, i) => {
@@ -310,29 +494,24 @@
       });
     }
 
-    // Hero section
     reveal('.hero-section .section-eyebrow');
     reveal('.hero-section .hero-title', { duration: 1.1 });
     reveal('.hero-section .hero-subtitle', { duration: 1 });
     reveal('.hero-section .hero-cta', { duration: 0.8 });
 
-    // Story section
     reveal('#storySection .section-eyebrow');
     reveal('#storySection .section-title');
     reveal('#storySection .section-text', { stagger: 0.15 });
     reveal('#storySection .lore-card', { duration: 1.1 });
 
-    // Gameplay features
     reveal('#gameplaySection .section-eyebrow');
     reveal('#gameplaySection .section-title');
     reveal('.feature-card', { stagger: 0.12, start: 'top 92%' });
 
-    // Stats
     reveal('#statsSection .section-eyebrow');
     reveal('#statsSection .section-title');
     reveal('.stat', { stagger: 0.1, start: 'top 90%' });
 
-    // Animate stat numbers counting up
     document.querySelectorAll('.stat-number').forEach((el) => {
       const target = parseInt(el.dataset.target, 10);
       const obj = { val: 0 };
@@ -351,169 +530,11 @@
       });
     });
 
-    // Footer
     reveal('#footerSection .section-eyebrow');
     reveal('#footerSection .section-title');
     reveal('#footerSection .section-text');
     reveal('#footerSection .btn-lg');
   }
-
-  /* ─────────────────────────────────────────────
-     AMBIENT AUDIO ENGINE (Web Audio API)
-     Procedurally generates a dark, atmospheric
-     drone soundscape — no external file needed.
-     ───────────────────────────────────────────── */
-  const AmbientAudio = (() => {
-    let audioCtx    = null;
-    let masterGain  = null;
-    let isPlaying   = false;
-    let nodes       = [];
-
-    const VOLUME = 0.18;          // master volume (0–1)
-    const FADE_TIME = 1.5;        // fade in/out duration in seconds
-
-    function createContext() {
-      audioCtx   = new (window.AudioContext || window.webkitAudioContext)();
-      masterGain = audioCtx.createGain();
-      masterGain.gain.value = 0;
-      masterGain.connect(audioCtx.destination);
-    }
-
-    /**
-     * Build layered drones: fundamental + detuned harmonics
-     * through a low-pass filter for that muffled, eerie feel.
-     */
-    function createDrone(freq, detune, filterFreq, gainVal) {
-      const osc = audioCtx.createOscillator();
-      osc.type = 'sine';
-      osc.frequency.value = freq;
-      osc.detune.value = detune;
-
-      const filter = audioCtx.createBiquadFilter();
-      filter.type = 'lowpass';
-      filter.frequency.value = filterFreq;
-      filter.Q.value = 1.5;
-
-      const gain = audioCtx.createGain();
-      gain.gain.value = gainVal;
-
-      osc.connect(filter);
-      filter.connect(gain);
-      gain.connect(masterGain);
-      osc.start();
-
-      nodes.push({ osc, filter, gain });
-      return { osc, filter, gain };
-    }
-
-    /**
-     * Filtered noise layer for atmospheric texture
-     */
-    function createNoise(filterFreq, gainVal) {
-      const bufferSize = audioCtx.sampleRate * 4;
-      const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
-      const data = buffer.getChannelData(0);
-      for (let i = 0; i < bufferSize; i++) {
-        data[i] = (Math.random() * 2 - 1) * 0.5;
-      }
-
-      const source = audioCtx.createBufferSource();
-      source.buffer = buffer;
-      source.loop = true;
-
-      const filter = audioCtx.createBiquadFilter();
-      filter.type = 'lowpass';
-      filter.frequency.value = filterFreq;
-      filter.Q.value = 0.7;
-
-      const gain = audioCtx.createGain();
-      gain.gain.value = gainVal;
-
-      source.connect(filter);
-      filter.connect(gain);
-      gain.connect(masterGain);
-      source.start();
-
-      nodes.push({ osc: source, filter, gain });
-    }
-
-    /**
-     * Slow LFO modulating a drone's filter for organic movement
-     */
-    function createLFO(targetParam, rate, depth, center) {
-      const lfo = audioCtx.createOscillator();
-      lfo.type = 'sine';
-      lfo.frequency.value = rate;
-
-      const lfoGain = audioCtx.createGain();
-      lfoGain.gain.value = depth;
-
-      lfo.connect(lfoGain);
-      lfoGain.connect(targetParam);
-      targetParam.value = center;
-      lfo.start();
-
-      nodes.push({ osc: lfo, gain: lfoGain });
-    }
-
-    function buildSoundscape() {
-      // Deep sub-bass drone
-      const d1 = createDrone(55, 0, 200, 0.35);
-
-      // Slightly detuned octave for unease
-      createDrone(110.5, -8, 400, 0.15);
-
-      // High eerie harmonic
-      createDrone(330, 12, 600, 0.06);
-
-      // Fifth interval for that hollow feel
-      createDrone(82.5, -5, 300, 0.12);
-
-      // Filtered noise — wind/static texture
-      createNoise(250, 0.04);
-
-      // LFO on the main drone's filter for slow breathing movement
-      createLFO(d1.filter.frequency, 0.08, 80, 200);
-    }
-
-    function start() {
-      if (isPlaying) return;
-
-      if (!audioCtx) {
-        createContext();
-        buildSoundscape();
-      }
-
-      if (audioCtx.state === 'suspended') {
-        audioCtx.resume();
-      }
-
-      // Fade in
-      masterGain.gain.cancelScheduledValues(audioCtx.currentTime);
-      masterGain.gain.setValueAtTime(masterGain.gain.value, audioCtx.currentTime);
-      masterGain.gain.linearRampToValueAtTime(VOLUME, audioCtx.currentTime + FADE_TIME);
-
-      isPlaying = true;
-    }
-
-    function stop() {
-      if (!isPlaying || !audioCtx) return;
-
-      // Fade out
-      masterGain.gain.cancelScheduledValues(audioCtx.currentTime);
-      masterGain.gain.setValueAtTime(masterGain.gain.value, audioCtx.currentTime);
-      masterGain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + FADE_TIME);
-
-      isPlaying = false;
-    }
-
-    function toggle() {
-      if (isPlaying) { stop(); } else { start(); }
-      return isPlaying;
-    }
-
-    return { start, stop, toggle, get isPlaying() { return isPlaying; } };
-  })();
 
   /* ─────────────────────────────────────────────
      AUDIO TOGGLE BUTTON
@@ -523,13 +544,16 @@
     if (!btn) return;
 
     btn.addEventListener('click', () => {
-      const playing = AmbientAudio.toggle();
-      btn.classList.toggle('playing', playing);
+      const muted = AudioEngine.toggleMute();
+      btn.classList.toggle('playing', !muted);
+      btn.setAttribute('aria-label', muted ? 'Unmute audio' : 'Mute audio');
     });
 
-    // Show the button after preloader is done
+    // Show unmuted by default after preloader
     setTimeout(() => {
       btn.classList.remove('hidden');
+      // Reflect initial state: bg music will auto-start, so show "playing"
+      btn.classList.add('playing');
     }, 800);
   }
 
@@ -540,34 +564,30 @@
     sizeCanvas();
     window.addEventListener('resize', () => {
       sizeCanvas();
-      // Redraw current frame on resize
       const progress = displayFrame / (CONFIG.totalFrames - 1);
       const zoom = CONFIG.zoomStart + (CONFIG.zoomEnd - CONFIG.zoomStart) * progress;
       drawFrame(displayFrame, zoom);
     });
 
-    // Preload all frames
     await preloadImages();
 
-    // Draw first frame immediately
     drawFrame(0, CONFIG.zoomStart);
 
-    // Hide preloader
     preloader.classList.add('done');
 
-    // Show scroll indicator after a beat
     setTimeout(() => {
       scrollIndicator.classList.remove('hidden');
     }, 600);
 
-    // Start render loop & scroll animation
+    // Initialize audio engine (creates elements, binds autoplay listeners)
+    AudioEngine.init();
+
     startRenderLoop();
     initScrollAnimation();
     initContentAnimations();
     initAudioToggle();
   }
 
-  // Kick off
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
   } else {
